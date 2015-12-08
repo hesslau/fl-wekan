@@ -6,63 +6,25 @@
 /// Meteor method (like list ID and position for a card import);
 /// - getLabel(): i18n key for the text displayed in the popup, usually to
 /// explain how to get the data out of the source system.
-const ImportPopup = BlazeComponent.extendComponent({
+BlazeComponent.extendComponent({
   template() {
-    return 'importPopup';
-  },
-
-  jsonText() {
-    return Session.get('import.text');
-  },
-
-  membersMapping() {
-    return Session.get('import.membersToMap');
+    return 'import';
   },
 
   onCreated() {
-    this.error = new ReactiveVar('');
-    this.dataToImport = '';
+    this.validTextareaData = new ReactiveVar(false);
+    this.importData = new ReactiveVar('');
+    this.membersToMap = new ReactiveVar({});
   },
 
-  onFinish() {
-    Popup.close();
+  setImportData(importData) {
+    this.importData.set(importData);
+    this.validTextareaData.set(true);
   },
 
-  onShowMapping(evt) {
-    this._storeText(evt);
-    Popup.open('mapMembers')(evt);
-  },
-
-  onSubmit(evt){
-    evt.preventDefault();
-    const dataJson = this._storeText(evt);
-    let dataObject;
-    try {
-      dataObject = JSON.parse(dataJson);
-      this.setError('');
-    } catch (e) {
-      this.setError('error-json-malformed');
-      return;
-    }
-    if(this._hasAllNeededData(dataObject)) {
-      this._import(dataObject);
-    } else {
-      this._prepareAdditionalData(dataObject);
-      Popup.open(this._screenAdditionalData())(evt);
-
-    }
-  },
-
-  events() {
-    return [{
-      submit: this.onSubmit,
-      'click .show-mapping': this.onShowMapping,
-    }];
-  },
-
-  setError(error) {
-    this.error.set(error);
-  },
+  // onFinish() {
+  //   Utils.goBoardId(response);
+  // },
 
   _import(dataObject) {
     const additionalData = this.getAdditionalData();
@@ -78,7 +40,7 @@ const ImportPopup = BlazeComponent.extendComponent({
     }
     Session.set('import.membersToMap', null);
     Session.set('import.text', null);
-    Meteor.call(this.getMethodName(), dataObject, additionalData,
+    Meteor.call('importTrelloBoard', dataObject, additionalData,
       (error, response) => {
         if (error) {
           this.setError(error.error);
@@ -97,19 +59,20 @@ const ImportPopup = BlazeComponent.extendComponent({
   },
 
   _prepareAdditionalData(dataObject) {
-    // we will work on the list itself (an ordered array of objects)
-    // when a mapping is done, we add a 'wekan' field to the object representing the imported member
+    // we will work on the list itself (an ordered array of objects) when a
+    // mapping is done, we add a 'wekan' field to the object representing the
+    // imported member
     const membersToMap = dataObject.members;
     // auto-map based on username
     membersToMap.forEach((importedMember) => {
-      const wekanUser = Users.findOne({username: importedMember.username});
-      if(wekanUser) {
+      const wekanUser = Users.findOne({ username: importedMember.username });
+      if (wekanUser) {
         importedMember.wekan = wekanUser;
       }
     });
     // store members data and mapping in Session
     // (we go deep and 2-way, so storing in data context is not a viable option)
-    Session.set('import.membersToMap', membersToMap);
+    this.parentComponent().membersToMap.set(membersToMap);
     return membersToMap;
   },
 
@@ -122,53 +85,58 @@ const ImportPopup = BlazeComponent.extendComponent({
     Session.set('import.text', dataJson);
     return dataJson;
   },
-});
 
-ImportPopup.extendComponent({
-  getAdditionalData() {
-    const listId = this.currentData()._id;
-    const selector = `#js-list-${this.currentData()._id} .js-minicard:first`;
-    const firstCardDom = $(selector).get(0);
-    const sortIndex = Utils.calculateIndex(null, firstCardDom).base;
-    const result = {listId, sortIndex};
-    return result;
-  },
-
-  getMethodName() {
-    return 'importTrelloCard';
-  },
-
-  getLabel() {
-    return 'import-card-trello-instruction';
-  },
-}).register('listImportCardPopup');
-
-ImportPopup.extendComponent({
   getAdditionalData() {
     const result = {};
     return result;
   },
+}).register('import');
 
-  getMethodName() {
-    return 'importTrelloBoard';
+BlazeComponent.extendComponent({
+  template() {
+    return 'importTextarea';
   },
 
-  getLabel() {
-    return 'import-board-trello-instruction';
+  onCreated() {
+    this.error = new ReactiveVar('');
   },
 
-  onFinish(response) {
-    Utils.goBoardId(response);
+  setError(error) {
+    this.error.set(error);
   },
-}).register('boardImportBoardPopup');
 
-const ImportMapMembers = BlazeComponent.extendComponent({
+  onSubmit(evt){
+    evt.preventDefault();
+    const dataJson = this.find('.js-import-json').value;
+    try {
+      const dataObject = JSON.parse(dataJson);
+      this.setError('');
+      this.parentComponent().setImportData(dataObject);
+    } catch (e) {
+      this.setError('error-json-malformed');
+    }
+  },
+
+  events() {
+    return [{
+      submit: this.onSubmit,
+    }];
+  },
+}).register('importTextarea');
+
+BlazeComponent.extendComponent({
+  template() {
+    return 'importMapMembers';
+  },
+
   members() {
     return Session.get('import.membersToMap');
   },
+
   _refreshMembers(listOfMembers) {
     Session.set('import.membersToMap', listOfMembers);
   },
+
   /**
    * Will look into the list of members to import for the specified memberId,
    * then set its property to the supplied value.
@@ -206,9 +174,11 @@ const ImportMapMembers = BlazeComponent.extendComponent({
     // Session.get gives us a copy, we have to set it back so it sticks
     this._refreshMembers(listOfMembers);
   },
+
   setSelectedMember(memberId) {
     return this._setPropertyForMember('selected', true, memberId, true);
   },
+
   /**
    * returns the member with specified id,
    * or the selected member if memberId is not specified
@@ -223,49 +193,22 @@ const ImportMapMembers = BlazeComponent.extendComponent({
     }
     return allMembers.find(finder);
   },
+
   mapSelectedMember(wekan) {
     return this._setPropertyForMember('wekan', wekan, null);
   },
+
   unmapMember(memberId){
     return this._setPropertyForMember('wekan', null, memberId);
   },
+
+  events() {
+    return [{
+      'click .js-select-import': Popup.open('importMapMembersAdd'),
+    }];
+  },
+}).register('importMapMembers');
+
+Template.importMapMembersAddPopup.onRendered(function() {
+  this.find('.js-map-member input').focus();
 });
-
-ImportMapMembers.extendComponent({
-  onMapMember(evt) {
-    const memberToMap = this.currentData();
-    if(memberToMap.wekan) {
-      // todo xxx ask for confirmation?
-      this.unmapMember(memberToMap.id);
-    } else {
-      this.setSelectedMember(memberToMap.id);
-      Popup.open('mapMembersAdd')(evt);
-    }
-  },
-  onSubmit(evt) {
-    evt.preventDefault();
-    Popup.back();
-  },
-  events() {
-    return [{
-      'submit': this.onSubmit,
-      'click .mapping': this.onMapMember,
-    }];
-  },
-}).register('mapMembersPopup');
-
-ImportMapMembers.extendComponent({
-  onSelectUser(){
-    this.mapSelectedMember(this.currentData());
-    Popup.back();
-  },
-  events() {
-    return [{
-      'click .js-select-import': this.onSelectUser,
-    }];
-  },
-  onRendered() {
-    // todo XXX why do I not get the focus??
-    this.find('.js-map-member input').focus();
-  },
-}).register('mapMembersAddPopup');
